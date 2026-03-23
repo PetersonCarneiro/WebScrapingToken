@@ -22,6 +22,8 @@ jobs:
       - name: Set up Google Chrome
         id: setup-chrome
         uses: browser-actions/setup-chrome@v1
+        with:
+          install-chromedriver: true
 
       - name: Install dependencies
         run: |
@@ -33,6 +35,7 @@ jobs:
           EQS_LOGIN: ${{ secrets.EQS_LOGIN }}
           EQS_PASSWORD: ${{ secrets.EQS_PASSWORD }}
           CHROME_BINARY: ${{ steps.setup-chrome.outputs.chrome-path }}
+          CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
         run: python src/extract_eqs_tokens.py
 
       - name: Upload generated files
