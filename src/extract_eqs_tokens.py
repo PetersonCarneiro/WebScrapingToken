@@ -1,9 +1,9 @@
 import base64
 import json
 import os
-from pathlib import Path
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -23,7 +23,95 @@ OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "output"))
 OUTPUT_XLSX = OUTPUT_DIR / "Eqs_Tokens.xlsx"
 OUTPUT_JSON = OUTPUT_DIR / "Eqs_Tokens.json"
 GOOGLE_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+MAX_ATTEMPTS = 3
+DEFAULT_TIMEOUT = 30
 
+
+# ============================================================
+# UTILITÁRIOS DE LOG
+# ============================================================
+
+def print_banner(title: str, icon: str = "ℹ", width: int = 70) -> None:
+    separator = "=" * width
+    print(f"\n{separator}")
+    print(f"{icon} {title}")
+    print(separator)
+
+
+def print_step(message: str) -> None:
+    print(f"► {message}")
+
+
+def print_success(message: str) -> None:
+    print(f"✔ {message}")
+
+
+def print_warning(message: str) -> None:
+    print(f"⚠ {message}")
+
+
+def print_error(message: str) -> None:
+    print(f"✖ {message}")
+
+
+def mask_value(value: str | None, visible_chars: int = 50) -> str:
+    if not value:
+        return "ausente"
+    if len(value) <= visible_chars:
+        return value
+    return f"{value[:visible_chars]}..."
+
+
+# ============================================================
+# UTILITÁRIOS DE TOKEN / TEMPO
+# ============================================================
+
+def extract_token_expiration(token: str) -> int | None:
+    if not token:
+        return None
+
+    token_parts = token.split(".")
+    if len(token_parts) != 3:
+        return None
+
+    payload = token_parts[1]
+    padding = "=" * (-len(payload) % 4)
+
+    try:
+        decoded_payload = base64.urlsafe_b64decode(payload + padding)
+        payload_data = json.loads(decoded_payload)
+    except (ValueError, json.JSONDecodeError) as exc:
+        print_warning(f"Não foi possível decodificar o payload do JWT: {exc}")
+        return None
+
+    expiration = payload_data.get("exp")
+    if expiration is None:
+        return None
+
+    try:
+        return int(expiration)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_token_status(token: str) -> tuple[bool, int | None]:
+    expiration = extract_token_expiration(token)
+    if expiration is None:
+        return False, None
+
+    remaining_seconds = expiration - int(time.time())
+    return remaining_seconds > 0, remaining_seconds
+
+
+def format_expiration(token_expiration: int | None) -> str:
+    if not token_expiration:
+        return "não identificada"
+    return f"{token_expiration} ({datetime.fromtimestamp(token_expiration, timezone.utc).isoformat()})"
+
+
+# ============================================================
+# SELENIUM / CAPTURA DE REDE
+# ============================================================
 
 def build_driver() -> webdriver.Chrome:
     chrome_options = Options()
@@ -87,7 +175,7 @@ def get_matching_request_headers(driver: webdriver.Chrome) -> dict[str, str] | N
     return None
 
 
-def wait_for_target_request(driver: webdriver.Chrome, timeout: int = 30) -> dict[str, str]:
+def wait_for_target_request(driver: webdriver.Chrome, timeout: int = DEFAULT_TIMEOUT) -> dict[str, str]:
     end_time = time.time() + timeout
     while time.time() < end_time:
         headers = get_matching_request_headers(driver)
@@ -98,82 +186,131 @@ def wait_for_target_request(driver: webdriver.Chrome, timeout: int = 30) -> dict
     raise RuntimeError("Não foi possível localizar a requisição alvo nos logs de rede.")
 
 
-def extract_token_expiration(token: str) -> int | None:
-    if not token:
-        return None
+def navigate_to_target_report(driver: webdriver.Chrome) -> None:
+    print_step("Expandindo menu 'Relatórios (CHM)'...")
+    relatorios_menu = WebDriverWait(driver, DEFAULT_TIMEOUT).until(
+        EC.presence_of_element_located((By.XPATH, "//span[text()='Relatórios (CHM)']/.."))
+    )
+    driver.execute_script("arguments[0].click();", relatorios_menu)
+    print_success("Menu 'Relatórios (CHM)' expandido.")
 
-    token_parts = token.split(".")
-    if len(token_parts) != 3:
-        return None
-
-    payload = token_parts[1]
-    padding = "=" * (-len(payload) % 4)
-
-    try:
-        decoded_payload = base64.urlsafe_b64decode(payload + padding)
-        payload_data = json.loads(decoded_payload)
-    except (ValueError, json.JSONDecodeError):
-        return None
-
-    expiration = payload_data.get("exp")
-    if expiration is None:
-        return None
-
-    try:
-        return int(expiration)
-    except (TypeError, ValueError):
-        return None
+    print_step("Clicando em 'Itens de LPU Por Local'...")
+    lpu_local_menu = WebDriverWait(driver, DEFAULT_TIMEOUT).until(
+        EC.presence_of_element_located((By.XPATH, "//span[text()='Itens de LPU Por Local']/.."))
+    )
+    driver.execute_script("arguments[0].click();", lpu_local_menu)
+    print_success("Relatório 'Itens de LPU Por Local' aberto.")
 
 
-def extract_tokens(login: str, password: str) -> dict:
-    driver = build_driver()
+def perform_login(driver: webdriver.Chrome, login: str, password: str) -> None:
+    print_step(f"Abrindo página de login: {LOGIN_URL}")
+    driver.get(LOGIN_URL)
 
-    try:
-        print("Iniciando a automação de login...")
-        driver.get(LOGIN_URL)
+    print_step("Preenchendo credenciais...")
+    WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "login"))).send_keys(login)
+    driver.find_element(By.ID, "senha").send_keys(password)
+    print_success("Campos de login preenchidos.")
 
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.ID, "login"))
-        ).send_keys(login)
-        driver.find_element(By.ID, "senha").send_keys(password)
-        driver.find_element(By.TAG_NAME, "button").click()
+    print_step("Enviando formulário de login...")
+    driver.find_element(By.TAG_NAME, "button").click()
 
-        WebDriverWait(driver, 20).until_not(EC.url_to_be(LOGIN_URL))
-        print("Login bem-sucedido!")
+    WebDriverWait(driver, 20).until_not(EC.url_to_be(LOGIN_URL))
+    print_success("Login realizado com sucesso.")
 
-        relatorios_menu = WebDriverWait(driver, 30).until(
-            EC.presence_of_element_located((By.XPATH, "//span[text()='Relatórios (CHM)']/.."))
+
+def extract_headers_payload(headers: dict[str, str]) -> dict[str, Any]:
+    token = headers.get("Authorization") or headers.get("authorization")
+    ido = headers.get("ido") or headers.get("Ido") or headers.get("IDO")
+    cookie = headers.get("Cookie") or headers.get("cookie")
+    token_expiration = extract_token_expiration(token)
+    token_valid, remaining_seconds = get_token_status(token) if token else (False, None)
+
+    return {
+        "token": token,
+        "ido": ido,
+        "cookie": cookie,
+        "token_expiration": token_expiration,
+        "token_valid": token_valid,
+        "remaining_seconds": remaining_seconds,
+    }
+
+
+def print_capture_details(data: dict[str, Any]) -> None:
+    print_banner("HEADERS CAPTURADOS", icon="🔎")
+    print(f"Token:             {mask_value(data.get('token'))}")
+    print(f"Ido:               {data.get('ido') or 'ausente'}")
+    print(f"Cookie:            {'presente' if data.get('cookie') else 'ausente'}")
+    print(f"Expiração JWT:     {format_expiration(data.get('token_expiration'))}")
+
+    remaining_seconds = data.get("remaining_seconds")
+    if remaining_seconds is None:
+        print("Validade do token: não foi possível validar")
+    elif remaining_seconds > 0:
+        print(
+            "Validade do token: "
+            f"válido por mais {remaining_seconds} segundos (~{remaining_seconds // 60} min)"
         )
-        driver.execute_script("arguments[0].click();", relatorios_menu)
-
-        lpu_local_menu = WebDriverWait(driver, 30).until(
-            EC.presence_of_element_located((By.XPATH, "//span[text()='Itens de LPU Por Local']/.."))
-        )
-        driver.execute_script("arguments[0].click();", lpu_local_menu)
-
-        headers = wait_for_target_request(driver)
-        token = headers.get("Authorization") or headers.get("authorization")
-        ido = headers.get("ido") or headers.get("Ido") or headers.get("IDO")
-        cookie = headers.get("Cookie") or headers.get("cookie")
-        token_expiration = extract_token_expiration(token)
-        print("Requisição alvo encontrada. Headers capturados.")
-
-        if not token or not ido:
-            raise RuntimeError("Não foi possível capturar token e ido.")
-
-        return {
-            "token": token,
-            "ido": ido,
-            "cookie": cookie,
-            "token_expiration": token_expiration,
-        }
-    finally:
-        driver.quit()
-        print("Automação finalizada.")
+    else:
+        print(f"Validade do token: expirado há {-remaining_seconds} segundos")
 
 
-def save_outputs(data: dict) -> None:
+# ============================================================
+# FLUXO PRINCIPAL
+# ============================================================
+
+def extract_tokens(login: str, password: str, max_attempts: int = MAX_ATTEMPTS) -> dict[str, Any]:
+    for attempt in range(1, max_attempts + 1):
+        driver = None
+        print_banner(f"TENTATIVA {attempt}/{max_attempts}", icon="🚀")
+
+        try:
+            print_step("Inicializando Chrome headless e habilitando logs de rede...")
+            driver = build_driver()
+            print_success("Driver inicializado.")
+
+            perform_login(driver, login=login, password=password)
+            navigate_to_target_report(driver)
+
+            print_step(
+                "Aguardando a requisição alvo nos logs de rede: "
+                f".../{REQUEST_URL_FRAGMENT}"
+            )
+            headers = wait_for_target_request(driver)
+            print_success("Requisição alvo encontrada nos logs de rede.")
+
+            data = extract_headers_payload(headers)
+            print_capture_details(data)
+
+            if not data["token"] or not data["ido"]:
+                raise RuntimeError("Não foi possível capturar token e ido.")
+
+            if not data["token_valid"]:
+                raise RuntimeError("O token capturado está inválido ou expirado.")
+
+            print_success("Captura concluída com sucesso.")
+            return data
+
+        except Exception as exc:
+            print_error(f"Falha na tentativa {attempt}: {exc}")
+            if attempt == max_attempts:
+                raise RuntimeError(
+                    "Todas as tentativas falharam. Verifique credenciais, conectividade e o fluxo da página."
+                ) from exc
+            print_warning("Nova tentativa será iniciada em instantes...")
+            time.sleep(2)
+        finally:
+            if driver:
+                driver.quit()
+                print_step("Driver encerrado.")
+
+    raise RuntimeError("Fluxo encerrado sem retorno de dados.")
+
+
+def save_outputs(data: dict[str, Any]) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    print_banner("SALVANDO ARQUIVOS", icon="💾")
+    print_step(f"Garantindo diretório de saída: {OUTPUT_DIR}")
 
     df = pd.DataFrame(
         {
@@ -185,10 +322,14 @@ def save_outputs(data: dict) -> None:
     )
     df.to_excel(OUTPUT_XLSX, index=False)
     OUTPUT_JSON.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Arquivos salvos em: {OUTPUT_XLSX} e {OUTPUT_JSON}")
+    print_success(f"Excel salvo em: {OUTPUT_XLSX}")
+    print_success(f"JSON salvo em: {OUTPUT_JSON}")
 
     if is_google_drive_upload_configured():
+        print_step("Configuração de upload para Google Drive detectada.")
         upload_excel_to_google_drive(OUTPUT_XLSX)
+    else:
+        print_warning("Upload para Google Drive não configurado; salvando apenas localmente.")
 
     print_summary(data)
 
@@ -217,7 +358,7 @@ def upload_excel_to_google_drive(file_path: Path) -> None:
             fileId=existing_file_id,
             media_body=media,
         ).execute()
-        print(f"✔ Arquivo atualizado no Google Drive: {file_path.name}")
+        print_success(f"Arquivo atualizado no Google Drive: {file_path.name}")
         return
 
     service.files().create(
@@ -228,7 +369,7 @@ def upload_excel_to_google_drive(file_path: Path) -> None:
         media_body=media,
         fields="id",
     ).execute()
-    print(f"✔ Arquivo enviado ao Google Drive: {file_path.name}")
+    print_success(f"Arquivo enviado ao Google Drive: {file_path.name}")
 
 
 def build_google_drive_service(service_account_json: str) -> Any:
@@ -256,26 +397,17 @@ def find_existing_drive_file_id(service: Any, folder_id: str, file_name: str) ->
     return files[0]["id"]
 
 
-def print_summary(data: dict) -> None:
-    token_expiration = data.get("token_expiration")
-    if token_expiration:
-        expiration_text = (
-            f"{token_expiration} ({datetime.fromtimestamp(token_expiration, UTC).isoformat()})"
-        )
-    else:
-        expiration_text = "não identificada"
-
-    print("\n" + "=" * 55)
-    print("  RESUMO")
-    print("=" * 55)
-    print(f"  Token:          {data['token'][:50]}...")
-    print(f"  Ido:            {data['ido']}")
-    print(f"  Cookie:         {'presente' if data.get('cookie') else 'ausente'}")
-    print(f"  Expiração:      {expiration_text}")
-    print("=" * 55)
+def print_summary(data: dict[str, Any]) -> None:
+    print_banner("RESUMO FINAL", icon="📋")
+    print(f"Token:             {mask_value(data.get('token'))}")
+    print(f"Ido:               {data.get('ido')}")
+    print(f"Cookie:            {'presente' if data.get('cookie') else 'ausente'}")
+    print(f"Expiração JWT:     {format_expiration(data.get('token_expiration'))}")
+    print(f"Arquivo Excel:     {OUTPUT_XLSX}")
+    print(f"Arquivo JSON:      {OUTPUT_JSON}")
 
 
-if __name__ == "__main__":
+def main() -> None:
     login = os.getenv("EQS_LOGIN")
     password = os.getenv("EQS_PASSWORD")
 
@@ -284,10 +416,18 @@ if __name__ == "__main__":
             "Defina as variáveis de ambiente EQS_LOGIN e EQS_PASSWORD antes de executar o script."
         )
 
+    print_banner("AUTOMAÇÃO EQS - CAPTURA DE TOKEN", icon="🤖")
+    print_step("Credenciais e ambiente detectados. Iniciando fluxo...")
+
     try:
         extracted = extract_tokens(login=login, password=password)
         save_outputs(extracted)
+        print_success("Fluxo concluído sem erros.")
     except RuntimeError as exc:
-        print("\n✖ Tokens não capturados. O arquivo Excel NÃO foi atualizado.")
-        print("  Verifique os logs acima e tente novamente.")
-        raise SystemExit(str(exc))
+        print_error("Tokens não capturados. O arquivo Excel NÃO foi atualizado.")
+        print_warning("Revise os logs acima e tente novamente.")
+        raise SystemExit(str(exc)) from exc
+
+
+if __name__ == "__main__":
+    main()
