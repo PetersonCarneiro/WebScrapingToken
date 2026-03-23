@@ -10,7 +10,6 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from webdriver_manager.chrome import ChromeDriverManager
 
 LOGIN_URL = "https://eqs.arenanet.com.br/dist/#/login"
 REQUEST_URL_FRAGMENT = "chamado/rel-reembolsavel-chamado-estacao/listar"
@@ -36,7 +35,9 @@ def build_driver() -> webdriver.Chrome:
 
     chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
-    service = Service(ChromeDriverManager().install())
+    chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+    service = Service(chromedriver_path) if chromedriver_path else None
+
     driver = webdriver.Chrome(service=service, options=chrome_options)
     driver.execute_cdp_cmd("Network.enable", {})
     return driver
