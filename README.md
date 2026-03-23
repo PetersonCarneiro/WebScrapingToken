@@ -40,5 +40,6 @@ Os arquivos gerados ficarão em `output/Eqs_Tokens.xlsx` e `output/Eqs_Tokens.js
 ## Observações
 
 - O script não depende de `google.colab` nem de Google Drive.
+- `setuptools` faz parte das dependências para disponibilizar o módulo `pkg_resources`, exigido indiretamente pelo `selenium-wire` em execuções com Python 3.12+.
 - Para gravar os tokens em outro destino, altere a variável `OUTPUT_DIR`.
 - Se quiser persistir os arquivos em outra plataforma, você pode consumir o artifact do workflow ou adicionar um passo extra para upload.
