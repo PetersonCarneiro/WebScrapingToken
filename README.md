@@ -1,6 +1,6 @@
 # WebScrepingToken
 
-Automação em Python para capturar os headers `Authorization`, `ido` e `cookie` da aplicação EQS usando Selenium Wire, salvando o resultado em Excel e JSON para uso no GitHub Actions.
+Automação em Python para capturar os headers `Authorization`, `ido` e `cookie` da aplicação EQS usando Selenium 4 com logs de rede do Chrome DevTools, salvando o resultado em Excel e JSON para uso no GitHub Actions.
 
 ## Arquivos principais
 
@@ -40,6 +40,6 @@ Os arquivos gerados ficarão em `output/Eqs_Tokens.xlsx` e `output/Eqs_Tokens.js
 ## Observações
 
 - O script não depende de `google.colab` nem de Google Drive.
-- `setuptools` faz parte das dependências para disponibilizar o módulo `pkg_resources`, exigido indiretamente pelo `selenium-wire` em execuções com Python 3.12+.
+- O script usa os logs de rede expostos pelo Chrome DevTools via Selenium 4, evitando a dependência de `selenium-wire` e o erro de `pkg_resources` em ambientes com Python 3.12+.
 - Para gravar os tokens em outro destino, altere a variável `OUTPUT_DIR`.
 - Se quiser persistir os arquivos em outra plataforma, você pode consumir o artifact do workflow ou adicionar um passo extra para upload.
