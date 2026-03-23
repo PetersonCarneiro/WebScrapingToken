@@ -34,6 +34,8 @@ jobs:
         env:
           EQS_LOGIN: ${{ secrets.EQS_LOGIN }}
           EQS_PASSWORD: ${{ secrets.EQS_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           CHROME_BINARY: ${{ steps.setup-chrome.outputs.chrome-path }}
           CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
         run: python src/extract_eqs_tokens.py

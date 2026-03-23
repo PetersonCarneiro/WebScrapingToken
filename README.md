@@ -1,6 +1,6 @@
 # WebScrepingToken
 
-Automação em Python para capturar os headers `Authorization`, `ido` e `cookie` da aplicação EQS usando Selenium 4 com logs de rede do Chrome DevTools, salvando o resultado em Excel e JSON para uso no GitHub Actions.
+Automação em Python para capturar os headers `Authorization`, `ido` e `cookie` da aplicação EQS usando Selenium 4 com logs de rede do Chrome DevTools, salvando o resultado em Excel e JSON localmente e, no GitHub Actions, também no Google Drive via Service Account.
 
 ## Arquivos principais
 
@@ -14,6 +14,8 @@ No repositório do GitHub, configure estes secrets:
 
 - `EQS_LOGIN`
 - `EQS_PASSWORD`
+- `GOOGLE_SERVICE_ACCOUNT_JSON`
+- `GOOGLE_DRIVE_FOLDER_ID`
 
 ## Como funciona no GitHub Actions
 
@@ -37,9 +39,27 @@ python src/extract_eqs_tokens.py
 
 Os arquivos gerados ficarão em `output/Eqs_Tokens.xlsx` e `output/Eqs_Tokens.json`.
 
+### Salvando também no Google Drive pelo GitHub Actions
+
+Para enviar o Excel gerado para o Google Drive a partir do GitHub Actions:
+
+1. Crie uma **Service Account** no Google Cloud.
+2. Ative a **Google Drive API** no projeto.
+3. Gere uma chave JSON da Service Account.
+4. Compartilhe a pasta do Drive com o e-mail da Service Account com permissão de **Editor**.
+5. Salve o conteúdo completo do JSON no secret `GOOGLE_SERVICE_ACCOUNT_JSON`.
+6. Salve o ID da pasta do Drive no secret `GOOGLE_DRIVE_FOLDER_ID`.
+
+Quando esses dois secrets estiverem configurados, o script procura um arquivo chamado `Eqs_Tokens.xlsx` dentro da pasta informada:
+
+- se já existir, ele atualiza o arquivo;
+- se não existir, ele cria um novo.
+
+O JSON continua sendo salvo localmente em `output/Eqs_Tokens.json`.
+
 ## Observações
 
-- O script não depende de `google.colab` nem de Google Drive.
+- O script continua funcionando mesmo sem os secrets do Google Drive; nesse caso ele salva apenas em `output/`.
 - O script usa os logs de rede expostos pelo Chrome DevTools via Selenium 4, evitando a dependência de `selenium-wire` e o erro de `pkg_resources` em ambientes com Python 3.12+.
-- Para gravar os tokens em outro destino, altere a variável `OUTPUT_DIR`.
-- Se quiser persistir os arquivos em outra plataforma, você pode consumir o artifact do workflow ou adicionar um passo extra para upload.
+- Para gravar os tokens em outro destino local, altere a variável `OUTPUT_DIR`.
+- O upload para o Drive usa Google Drive API com Service Account, o que é compatível com execução não interativa no GitHub Actions.

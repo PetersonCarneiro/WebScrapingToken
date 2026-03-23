@@ -2,8 +2,12 @@ import json
 import os
 from pathlib import Path
 import time
+from typing import Any
 
 import pandas as pd
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -16,6 +20,7 @@ REQUEST_URL_FRAGMENT = "chamado/rel-reembolsavel-chamado-estacao/listar"
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "output"))
 OUTPUT_XLSX = OUTPUT_DIR / "Eqs_Tokens.xlsx"
 OUTPUT_JSON = OUTPUT_DIR / "Eqs_Tokens.json"
+GOOGLE_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
 def build_driver() -> webdriver.Chrome:
@@ -150,6 +155,84 @@ def save_outputs(data: dict) -> None:
     OUTPUT_JSON.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Arquivos salvos em: {OUTPUT_XLSX} e {OUTPUT_JSON}")
 
+    if is_google_drive_upload_configured():
+        upload_excel_to_google_drive(OUTPUT_XLSX)
+
+    print_summary(data)
+
+
+def is_google_drive_upload_configured() -> bool:
+    return bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON") and os.getenv("GOOGLE_DRIVE_FOLDER_ID"))
+
+
+def upload_excel_to_google_drive(file_path: Path) -> None:
+    folder_id = os.environ["GOOGLE_DRIVE_FOLDER_ID"]
+    service = build_google_drive_service(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    existing_file_id = find_existing_drive_file_id(
+        service=service,
+        folder_id=folder_id,
+        file_name=file_path.name,
+    )
+
+    media = MediaFileUpload(
+        str(file_path),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        resumable=False,
+    )
+
+    if existing_file_id:
+        service.files().update(
+            fileId=existing_file_id,
+            media_body=media,
+        ).execute()
+        print(f"✔ Arquivo atualizado no Google Drive: {file_path.name}")
+        return
+
+    service.files().create(
+        body={
+            "name": file_path.name,
+            "parents": [folder_id],
+        },
+        media_body=media,
+        fields="id",
+    ).execute()
+    print(f"✔ Arquivo enviado ao Google Drive: {file_path.name}")
+
+
+def build_google_drive_service(service_account_json: str) -> Any:
+    credentials_info = json.loads(service_account_json)
+    credentials = service_account.Credentials.from_service_account_info(
+        credentials_info,
+        scopes=GOOGLE_DRIVE_SCOPES,
+    )
+    return build("drive", "v3", credentials=credentials)
+
+
+def find_existing_drive_file_id(service: Any, folder_id: str, file_name: str) -> str | None:
+    response = service.files().list(
+        q=(
+            f"'{folder_id}' in parents and name = '{file_name}' "
+            "and trashed = false"
+        ),
+        spaces="drive",
+        fields="files(id, name)",
+        pageSize=1,
+    ).execute()
+    files = response.get("files", [])
+    if not files:
+        return None
+    return files[0]["id"]
+
+
+def print_summary(data: dict) -> None:
+    print("\n" + "=" * 55)
+    print("  RESUMO")
+    print("=" * 55)
+    print(f"  Token:          {data['token'][:50]}...")
+    print(f"  Ido:            {data['ido']}")
+    print(f"  Cookie:         {'presente' if data.get('cookie') else 'ausente'}")
+    print("=" * 55)
+
 
 if __name__ == "__main__":
     login = os.getenv("EQS_LOGIN")
@@ -160,5 +243,10 @@ if __name__ == "__main__":
             "Defina as variáveis de ambiente EQS_LOGIN e EQS_PASSWORD antes de executar o script."
         )
 
-    extracted = extract_tokens(login=login, password=password)
-    save_outputs(extracted)
+    try:
+        extracted = extract_tokens(login=login, password=password)
+        save_outputs(extracted)
+    except RuntimeError as exc:
+        print("\n✖ Tokens não capturados. O arquivo Excel NÃO foi atualizado.")
+        print("  Verifique os logs acima e tente novamente.")
+        raise SystemExit(str(exc))
