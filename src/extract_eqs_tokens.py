@@ -1,14 +1,15 @@
 import json
 import os
 from pathlib import Path
+import time
 
 import pandas as pd
+from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from seleniumwire import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
 
 LOGIN_URL = "https://eqs.arenanet.com.br/dist/#/login"
@@ -33,21 +34,64 @@ def build_driver() -> webdriver.Chrome:
     if chrome_binary:
         chrome_options.binary_location = chrome_binary
 
+    chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+
     service = Service(ChromeDriverManager().install())
-    seleniumwire_options = {
-        "request_storage": "memory",
-        "request_storage_max_size": 200,
-    }
-    return webdriver.Chrome(
-        service=service,
-        options=chrome_options,
-        seleniumwire_options=seleniumwire_options,
-    )
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver.execute_cdp_cmd("Network.enable", {})
+    return driver
+
+
+def get_matching_request_headers(driver: webdriver.Chrome) -> dict[str, str] | None:
+    request_urls: dict[str, str] = {}
+
+    for entry in driver.get_log("performance"):
+        message = json.loads(entry["message"])["message"]
+        method = message.get("method")
+        params = message.get("params", {})
+        request_id = params.get("requestId")
+
+        if method == "Network.requestWillBeSent":
+            request = params.get("request", {})
+            if request_id and request.get("url"):
+                request_urls[request_id] = request["url"]
+            continue
+
+        if method != "Network.requestWillBeSentExtraInfo":
+            continue
+
+        request_url = request_urls.get(request_id, "")
+        if REQUEST_URL_FRAGMENT not in request_url:
+            continue
+
+        headers = params.get("headers", {})
+        associated_cookies = params.get("associatedCookies", [])
+
+        if associated_cookies and "Cookie" not in headers and "cookie" not in headers:
+            headers["Cookie"] = "; ".join(
+                f"{item['cookie']['name']}={item['cookie']['value']}"
+                for item in associated_cookies
+                if item.get("cookie")
+            )
+
+        return headers
+
+    return None
+
+
+def wait_for_target_request(driver: webdriver.Chrome, timeout: int = 30) -> dict[str, str]:
+    end_time = time.time() + timeout
+    while time.time() < end_time:
+        headers = get_matching_request_headers(driver)
+        if headers:
+            return headers
+        time.sleep(1)
+
+    raise RuntimeError("Não foi possível localizar a requisição alvo nos logs de rede.")
 
 
 def extract_tokens(login: str, password: str) -> dict:
     driver = build_driver()
-    token = ido = cookie = None
 
     try:
         print("Iniciando a automação de login...")
@@ -72,18 +116,11 @@ def extract_tokens(login: str, password: str) -> dict:
         )
         driver.execute_script("arguments[0].click();", lpu_local_menu)
 
-        WebDriverWait(driver, 30).until(
-            lambda drv: any(REQUEST_URL_FRAGMENT in req.url for req in drv.requests)
-        )
-
-        for request in driver.requests:
-            if REQUEST_URL_FRAGMENT in request.url:
-                headers = request.headers
-                token = headers.get("Authorization") or headers.get("authorization")
-                ido = headers.get("ido") or headers.get("Ido") or headers.get("IDO")
-                cookie = headers.get("Cookie") or headers.get("cookie")
-                print("Requisição alvo encontrada. Headers capturados.")
-                break
+        headers = wait_for_target_request(driver)
+        token = headers.get("Authorization") or headers.get("authorization")
+        ido = headers.get("ido") or headers.get("Ido") or headers.get("IDO")
+        cookie = headers.get("Cookie") or headers.get("cookie")
+        print("Requisição alvo encontrada. Headers capturados.")
 
         if not token or not ido:
             raise RuntimeError("Não foi possível capturar token e ido.")
