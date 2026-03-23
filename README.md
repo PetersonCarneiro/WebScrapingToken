@@ -1,6 +1,6 @@
 # WebScrepingToken
 
-Automação em Python para capturar os headers `Authorization`, `ido` e `cookie` da aplicação EQS usando Selenium 4 com logs de rede do Chrome DevTools, salvando o resultado em Excel e JSON localmente e, no Colab, também no Google Drive na pasta `BI-Qlik`.
+Automação em Python para capturar os headers `Authorization`, `ido` e `cookie` da aplicação EQS usando Selenium 4 com logs de rede do Chrome DevTools, salvando o resultado em Excel e JSON localmente e, no GitHub Actions, também no Google Drive via Service Account.
 
 ## Arquivos principais
 
@@ -14,6 +14,8 @@ No repositório do GitHub, configure estes secrets:
 
 - `EQS_LOGIN`
 - `EQS_PASSWORD`
+- `GOOGLE_SERVICE_ACCOUNT_JSON`
+- `GOOGLE_DRIVE_FOLDER_ID`
 
 ## Como funciona no GitHub Actions
 
@@ -37,34 +39,27 @@ python src/extract_eqs_tokens.py
 
 Os arquivos gerados ficarão em `output/Eqs_Tokens.xlsx` e `output/Eqs_Tokens.json`.
 
-### Salvando também no Google Drive
+### Salvando também no Google Drive pelo GitHub Actions
 
-O script agora segue mais de perto o fluxo original:
+Para enviar o Excel gerado para o Google Drive a partir do GitHub Actions:
 
-1. **No Colab**: se `google.colab` estiver disponível, ele executa `drive.mount('/content/drive')`.
-2. Depois grava o Excel em `/content/drive/My Drive/BI-Qlik/Eqs_Tokens.xlsx`.
-3. Se já existir um arquivo anterior, ele remove antes de salvar o novo.
-4. O Excel inclui as colunas `Token`, `Ido`, `Cookie` e `TokenExpiracao`.
-5. Se quiser usar outra pasta no Drive, defina `GOOGLE_DRIVE_DIR`.
+1. Crie uma **Service Account** no Google Cloud.
+2. Ative a **Google Drive API** no projeto.
+3. Gere uma chave JSON da Service Account.
+4. Compartilhe a pasta do Drive com o e-mail da Service Account com permissão de **Editor**.
+5. Salve o conteúdo completo do JSON no secret `GOOGLE_SERVICE_ACCOUNT_JSON`.
+6. Salve o ID da pasta do Drive no secret `GOOGLE_DRIVE_FOLDER_ID`.
 
-Exemplo no Colab:
+Quando esses dois secrets estiverem configurados, o script procura um arquivo chamado `Eqs_Tokens.xlsx` dentro da pasta informada:
 
-```python
-from google.colab import drive
-drive.mount('/content/drive')
-```
+- se já existir, ele atualiza o arquivo;
+- se não existir, ele cria um novo.
 
-Exemplo com variável de ambiente:
-
-```bash
-export GOOGLE_DRIVE_DIR='/content/drive/MyDrive/minha-pasta'
-python src/extract_eqs_tokens.py
-```
+O JSON continua sendo salvo localmente em `output/Eqs_Tokens.json`.
 
 ## Observações
 
-- O script continua funcionando fora do Colab e fora do Google Drive.
+- O script continua funcionando mesmo sem os secrets do Google Drive; nesse caso ele salva apenas em `output/`.
 - O script usa os logs de rede expostos pelo Chrome DevTools via Selenium 4, evitando a dependência de `selenium-wire` e o erro de `pkg_resources` em ambientes com Python 3.12+.
 - Para gravar os tokens em outro destino local, altere a variável `OUTPUT_DIR`.
-- O JSON local também passa a registrar `token_expiracao` para facilitar depuração.
-- Se o Google Drive não estiver disponível e `GOOGLE_DRIVE_DIR` não estiver definida, o script salva apenas na pasta local `output/`.
+- O upload para o Drive usa Google Drive API com Service Account, o que é compatível com execução não interativa no GitHub Actions.
