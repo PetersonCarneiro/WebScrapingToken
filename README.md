@@ -1,6 +1,6 @@
 # WebScrepingToken
 
-Automação em Python para capturar os headers `Authorization`, `ido` e `cookie` da aplicação EQS usando Selenium 4 com logs de rede do Chrome DevTools, salvando o resultado em Excel e JSON localmente e, no GitHub Actions, também no Google Drive via Service Account.
+Automação em Python para capturar os headers `Authorization`, `ido` e `cookie` da aplicação EQS usando Selenium 4 com logs de rede do Chrome DevTools. O script também extrai o tempo de expiração do token JWT (`exp`) e salva o resultado em Excel e JSON localmente e, no GitHub Actions, também no Google Drive via Service Account.
 
 ## Arquivos principais
 
@@ -39,6 +39,13 @@ python src/extract_eqs_tokens.py
 
 Os arquivos gerados ficarão em `output/Eqs_Tokens.xlsx` e `output/Eqs_Tokens.json`.
 
+O Excel passa a incluir as colunas:
+
+- `Token`
+- `Ido`
+- `Cookie`
+- `TokenExpiracao` (timestamp Unix em segundos, lido do campo `exp` do JWT quando disponível)
+
 ### Salvando também no Google Drive pelo GitHub Actions
 
 Para enviar o Excel gerado para o Google Drive a partir do GitHub Actions:
@@ -61,5 +68,6 @@ O JSON continua sendo salvo localmente em `output/Eqs_Tokens.json`.
 
 - O script continua funcionando mesmo sem os secrets do Google Drive; nesse caso ele salva apenas em `output/`.
 - O script usa os logs de rede expostos pelo Chrome DevTools via Selenium 4, evitando a dependência de `selenium-wire` e o erro de `pkg_resources` em ambientes com Python 3.12+.
+- A expiração do token é extraída localmente a partir do payload do JWT, sem necessidade de chamada adicional à API.
 - Para gravar os tokens em outro destino local, altere a variável `OUTPUT_DIR`.
 - O upload para o Drive usa Google Drive API com Service Account, o que é compatível com execução não interativa no GitHub Actions.

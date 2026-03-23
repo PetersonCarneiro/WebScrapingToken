@@ -1,7 +1,9 @@
+import base64
 import json
 import os
 from pathlib import Path
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -96,6 +98,33 @@ def wait_for_target_request(driver: webdriver.Chrome, timeout: int = 30) -> dict
     raise RuntimeError("Não foi possível localizar a requisição alvo nos logs de rede.")
 
 
+def extract_token_expiration(token: str) -> int | None:
+    if not token:
+        return None
+
+    token_parts = token.split(".")
+    if len(token_parts) != 3:
+        return None
+
+    payload = token_parts[1]
+    padding = "=" * (-len(payload) % 4)
+
+    try:
+        decoded_payload = base64.urlsafe_b64decode(payload + padding)
+        payload_data = json.loads(decoded_payload)
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+    expiration = payload_data.get("exp")
+    if expiration is None:
+        return None
+
+    try:
+        return int(expiration)
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_tokens(login: str, password: str) -> dict:
     driver = build_driver()
 
@@ -126,6 +155,7 @@ def extract_tokens(login: str, password: str) -> dict:
         token = headers.get("Authorization") or headers.get("authorization")
         ido = headers.get("ido") or headers.get("Ido") or headers.get("IDO")
         cookie = headers.get("Cookie") or headers.get("cookie")
+        token_expiration = extract_token_expiration(token)
         print("Requisição alvo encontrada. Headers capturados.")
 
         if not token or not ido:
@@ -135,6 +165,7 @@ def extract_tokens(login: str, password: str) -> dict:
             "token": token,
             "ido": ido,
             "cookie": cookie,
+            "token_expiration": token_expiration,
         }
     finally:
         driver.quit()
@@ -149,6 +180,7 @@ def save_outputs(data: dict) -> None:
             "Token": [data["token"]],
             "Ido": [data["ido"]],
             "Cookie": [data.get("cookie")],
+            "TokenExpiracao": [data.get("token_expiration")],
         }
     )
     df.to_excel(OUTPUT_XLSX, index=False)
@@ -225,12 +257,21 @@ def find_existing_drive_file_id(service: Any, folder_id: str, file_name: str) ->
 
 
 def print_summary(data: dict) -> None:
+    token_expiration = data.get("token_expiration")
+    if token_expiration:
+        expiration_text = (
+            f"{token_expiration} ({datetime.fromtimestamp(token_expiration, UTC).isoformat()})"
+        )
+    else:
+        expiration_text = "não identificada"
+
     print("\n" + "=" * 55)
     print("  RESUMO")
     print("=" * 55)
     print(f"  Token:          {data['token'][:50]}...")
     print(f"  Ido:            {data['ido']}")
     print(f"  Cookie:         {'presente' if data.get('cookie') else 'ausente'}")
+    print(f"  Expiração:      {expiration_text}")
     print("=" * 55)
 
 
